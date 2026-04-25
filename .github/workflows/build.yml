@@ -21,7 +21,11 @@ jobs:
       run: bash ./tools/prepare-ci.sh
 
     - name: Build Libs for ${{ matrix.target }}
-      run: bash ./build.sh -e -t ${{ matrix.target }}
+      # Pin ESP-IDF commit to avoid drift on release/v5.5 that breaks
+      # the Arduino core (framework-arduinoespressif32 3.3.3) used downstream
+      env:
+        IDF_COMMIT: f1a1df9b2e
+      run: bash ./build.sh -e -i "$IDF_COMMIT" -t ${{ matrix.target }}
 
     - name: Upload archive
       uses: actions/upload-artifact@v4
