@@ -526,6 +526,30 @@ echo -n "$LD_FLAGS" > "$FLAGS_DIR/ld_flags"
 echo -n "$LD_SCRIPTS" > "$FLAGS_DIR/ld_scripts"
 echo -n "$AR_LIBS" > "$FLAGS_DIR/ld_libs"
 
+# Inline GCC response files (@file references) so the published flags
+# don't depend on the build directory layout that won't exist downstream.
+for flag_file in "c_flags" "cpp_flags" "S_flags"; do
+	if grep -q '@\\"' "$FLAGS_DIR/$flag_file"; then
+		echo "Inlining response files in $FLAGS_DIR/$flag_file"
+		python3 - "$FLAGS_DIR/$flag_file" <<'PYEOF'
+import re, sys, os
+path = sys.argv[1]
+with open(path) as f:
+    content = f.read()
+def expand(m):
+    rf = m.group(1)
+    if os.path.isfile(rf):
+        with open(rf) as g:
+            return g.read().strip()
+    return ''
+content = re.sub(r'@\\"([^"]+)\\"', expand, content)
+content = re.sub(r'\s+', ' ', content).strip()
+with open(path, 'w') as f:
+    f.write(content)
+PYEOF
+	fi
+done
+
 # Matter Library adjustments
 for flag_file in "c_flags" "cpp_flags" "S_flags"; do
 	echo "Fixing $FLAGS_DIR/$flag_file"
