@@ -42,7 +42,11 @@ fi
 if [ "$AR_BRANCH" ]; then
 	echo "AR_BRANCH='$AR_BRANCH'"
 	git -C "$AR_COMPS/arduino" fetch --all && \
-	git -C "$AR_COMPS/arduino" checkout "$AR_BRANCH" && \
-	git -C "$AR_COMPS/arduino" pull --ff-only
+	git -C "$AR_COMPS/arduino" checkout "$AR_BRANCH" || exit 1
+	# Only fast-forward when AR_BRANCH resolved to a branch. When it is a tag
+	# or an explicit commit, `git checkout` lands in detached HEAD and
+	# `git pull` would fail with "You are not currently on a branch."
+	if git -C "$AR_COMPS/arduino" symbolic-ref -q HEAD >/dev/null; then
+		git -C "$AR_COMPS/arduino" pull --ff-only || exit 1
+	fi
 fi
-if [ $? -ne 0 ]; then exit 1; fi

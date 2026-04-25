@@ -98,10 +98,31 @@ if [ -d "managed_components/espressif__esp-zboss-lib/lib/$IDF_TARGET/" ]; then
 	EXCLUDE_LIBS+="zboss_stack.ed;zboss_stack.zczr;zboss_port.native;zboss_port.native.debug;zboss_port.remote;zboss_port.remote.debug;"
 fi
 
+# Inline GCC response files (@file) by replacing them with the file contents.
+# Newer ESP-IDF passes some toolchain flags this way; without expansion the @file
+# reference points at a CI-runner-only path that won't exist downstream.
+# The script is passed via -c so stdin remains available for the piped input.
+expand_response_files() {
+	python3 -c '
+import os, re, sys
+text = sys.stdin.read()
+def expand(m):
+    rf = m.group(1)
+    if os.path.isfile(rf):
+        with open(rf) as f:
+            return f.read().strip()
+    return ""
+text = re.sub(r"@\"([^\"]+)\"", expand, text)
+text = re.sub(r"@(\S+)", expand, text)
+sys.stdout.write(text)
+'
+}
+
 #collect includes, defines and c-flags
 str=`cat build/compile_commands.json | grep arduino-lib-builder-gcc.c | grep command | cut -d':' -f2 | cut -d',' -f1`
 str="${str:2:${#str}-1}" #remove leading space and quotes
 str=`printf '%b' "$str"` #unescape the string
+str=`echo "$str" | expand_response_files`
 set -- $str
 for item in "${@:2:${#@}-5}"; do
 	prefix="${item:0:2}"
@@ -138,6 +159,7 @@ done
 str=`cat build/compile_commands.json | grep arduino-lib-builder-as.S | grep command | cut -d':' -f2 | cut -d',' -f1`
 str="${str:2:${#str}-1}" #remove leading space and quotes
 str=`printf '%b' "$str"` #unescape the string
+str=`echo "$str" | expand_response_files`
 set -- $str
 for item in "${@:2:${#@}-5}"; do
 	prefix="${item:0:2}"
@@ -157,6 +179,7 @@ done
 str=`cat build/compile_commands.json | grep arduino-lib-builder-cpp.cpp | grep command | cut -d':' -f2 | cut -d',' -f1`
 str="${str:2:${#str}-1}" #remove leading space and quotes
 str=`printf '%b' "$str"` #unescape the string
+str=`echo "$str" | expand_response_files`
 set -- $str
 for item in "${@:2:${#@}-5}"; do
 	prefix="${item:0:2}"
@@ -453,9 +476,14 @@ for item; do
 			cp -n $f "$out_cpath$rel_p/"
 		done
 		# Temporary measure to fix issues caused by https://github.com/espressif/esp-idf/commit/dc4731101dd567cc74bbe4d0f03afe52b7db9afb#diff-1d2ce0d3989a80830fdf230bcaafb3117f32046d16cf46616ac3d55b4df2a988R17
-		if [[ "$fname" == "bt" && "$out_sub" == "/include/$IDF_TARGET/include" && -f "$ipath/controller/$IDF_TARGET/esp_bt_cfg.h" ]]; then
+		# bt/include/$IDF_TARGET/include/esp_bt.h pulls in headers from bt/controller/$IDF_TARGET/ via relative paths,
+		# so the whole controller config directory must be available downstream. Copy every *_cfg.h header found there
+		# (esp_bt_cfg.h, esp_bredr_cfg.h, esp_ble_cfg.h, ...) to keep up with new additions in ESP-IDF.
+		if [[ "$fname" == "bt" && "$out_sub" == "/include/$IDF_TARGET/include" && -d "$ipath/controller/$IDF_TARGET" ]]; then
 			mkdir -p "$AR_SDK/include/$fname/controller/$IDF_TARGET"
-			cp -n "$ipath/controller/$IDF_TARGET/esp_bt_cfg.h" "$AR_SDK/include/$fname/controller/$IDF_TARGET/esp_bt_cfg.h"
+			for cfg_h in "$ipath/controller/$IDF_TARGET"/*_cfg.h; do
+				[ -f "$cfg_h" ] && cp -n "$cfg_h" "$AR_SDK/include/$fname/controller/$IDF_TARGET/"
+			done
 		fi
 	fi
 done
@@ -525,30 +553,6 @@ echo -n "$AS_FLAGS" > "$FLAGS_DIR/S_flags"
 echo -n "$LD_FLAGS" > "$FLAGS_DIR/ld_flags"
 echo -n "$LD_SCRIPTS" > "$FLAGS_DIR/ld_scripts"
 echo -n "$AR_LIBS" > "$FLAGS_DIR/ld_libs"
-
-# Inline GCC response files (@file references) so the published flags
-# don't depend on the build directory layout that won't exist downstream.
-for flag_file in "c_flags" "cpp_flags" "S_flags"; do
-	if grep -q '@\\"' "$FLAGS_DIR/$flag_file"; then
-		echo "Inlining response files in $FLAGS_DIR/$flag_file"
-		python3 - "$FLAGS_DIR/$flag_file" <<'PYEOF'
-import re, sys, os
-path = sys.argv[1]
-with open(path) as f:
-    content = f.read()
-def expand(m):
-    rf = m.group(1)
-    if os.path.isfile(rf):
-        with open(rf) as g:
-            return g.read().strip()
-    return ''
-content = re.sub(r'@\\"([^"]+)\\"', expand, content)
-content = re.sub(r'\s+', ' ', content).strip()
-with open(path, 'w') as f:
-    f.write(content)
-PYEOF
-	fi
-done
 
 # Matter Library adjustments
 for flag_file in "c_flags" "cpp_flags" "S_flags"; do

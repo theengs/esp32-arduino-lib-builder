@@ -21,7 +21,19 @@ jobs:
       run: bash ./tools/prepare-ci.sh
 
     - name: Build Libs for ${{ matrix.target }}
-      run: bash ./build.sh -e -t ${{ matrix.target }}
+      # Pin both ESP-IDF commit and arduino-esp32 branch so the libs match
+      # the framework-arduinoespressif32 3.3.3 package used downstream.
+      # IDF release/v5.5 is a moving branch; tracking HEAD on it caused two
+      # different breakages between 0.1.0 and 0.1.2:
+      #   - newer IDF defines a public adc_continuous_data_t that collides
+      #     with the Arduino core's internal type
+      #   - newer arduino-esp32 master calls ble_gap_read_local_irk(), which
+      #     does not exist in older IDF (only ble_store_read_local_irk)
+      # Pin to the 0.1.0 versions, which are known to be mutually compatible.
+      env:
+        IDF_COMMIT: f1a1df9b2e
+        AR_BRANCH: '3.3.3'
+      run: bash ./build.sh -e -i "$IDF_COMMIT" -A "$AR_BRANCH" -t ${{ matrix.target }}
 
     - name: Upload archive
       uses: actions/upload-artifact@v4
