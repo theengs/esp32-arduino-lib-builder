@@ -1,12 +1,23 @@
-CONFIG_BTDM_CTRL_MODE_BTDM=y
+# BLE-only controller mode: OMG's BT stack is NimBLE (a BLE-only host) and never
+# uses classic Bluetooth — BM2/BM6 battery reads and SwitchBot control are all BLE
+# GATT connects on the BLE controller. Classic BR/EDR + A2DP/SPP/HFP are unreachable
+# dead weight. Dropping classic mode shrinks the IDF-computed CONFIG_BTDM_RESERVE_DRAM
+# (currently 0xdb5c = 54.8 KB, a DUAL-mode reservation) — the largest single static
+# BT cost on the no-PSRAM Plug. This matches what OMG's own sdkconfig.defaults already
+# requests (CONFIG_BTDM_CTRL_MODE_BLE_ONLY), overridden until now by the dual bundle.
+CONFIG_BTDM_CTRL_MODE_BLE_ONLY=y
+# CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY is not set
+# CONFIG_BTDM_CTRL_MODE_BTDM is not set
 CONFIG_BTDM_SCAN_DUPL_CACHE_SIZE=20
 CONFIG_BT_ENABLED=y
-CONFIG_BT_CLASSIC_ENABLED=y
-CONFIG_BT_A2DP_ENABLE=y
-CONFIG_BT_SPP_ENABLED=y
-CONFIG_BT_HFP_ENABLE=y
+# CONFIG_BT_CLASSIC_ENABLED is not set
 CONFIG_BT_STACK_NO_LOG=y
 CONFIG_BT_BLE_DYNAMIC_ENV_MEMORY=y
+# BLE controller connection slots: 3 -> 1. NimBLE host is already capped at 1 and
+# connects to one device at a time, so budgeting for 3 is waste. (Note: on its own
+# this does not move RESERVE_DRAM — kept because it is correct; the BLE-only mode
+# above is what shrinks the reservation.)
+CONFIG_BTDM_CTRL_BLE_MAX_CONN=1
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_OCCUPY_HSPI_HOST=y
 # Disable LIBTIME in IRAM to free ~3.5KB for boards using -mfix-esp32-psram-cache-issue
