@@ -193,6 +193,27 @@ for item in "${@:2:${#@}-5}"; do
 	fi
 done
 
+# ESP-IDF 5.5.x passes several Xtensa toolchain flags through a GCC @response-file
+# (see expand_response_files above). When that file can't be inlined while
+# parsing compile_commands.json the whole cluster is silently dropped. In the
+# 0.1.5 build this cost us -mlongcalls, so downstream from-source code (NimBLE,
+# ArduinoJson, core) was compiled with fixed-range call8 and large esp32 /
+# esp32s3 firmwares failed to link with
+# "dangerous relocation: call8: call target out of range".
+# Guarantee the build-critical Xtensa compile flags regardless of how IDF
+# happened to pass them (guarded so nothing is duplicated when already present).
+if [ "$IS_XTENSA" = "y" ]; then
+	XTENSA_REQUIRED_FLAGS="-mlongcalls -mdisable-hardware-atomics -fno-builtin-memcpy -fno-builtin-memset -fno-builtin-bzero -fno-builtin-stpcpy -fno-builtin-strncpy"
+	if [ "$IDF_TARGET" = "esp32" ]; then
+		XTENSA_REQUIRED_FLAGS="$XTENSA_REQUIRED_FLAGS -Wno-frame-address"
+	fi
+	for req in $XTENSA_REQUIRED_FLAGS; do
+		[[ " $C_FLAGS " != *" $req "* ]] && C_FLAGS="$req $C_FLAGS"
+		[[ " $CPP_FLAGS " != *" $req "* ]] && CPP_FLAGS="$req $CPP_FLAGS"
+	done
+	[[ " $CPP_FLAGS " != *" -fno-rtti "* ]] && CPP_FLAGS="-fno-rtti $CPP_FLAGS"
+fi
+
 set -- $C_FLAGS
 for item; do
 	if [[ $PIOARDUINO_CC_FLAGS != *"$item"* ]]; then
