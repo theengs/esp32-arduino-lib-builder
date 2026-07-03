@@ -90,8 +90,14 @@ CONFIG_MBEDTLS_ECJPAKE_C=y
 CONFIG_MBEDTLS_HKDF_C=y
 CONFIG_MBEDTLS_CAMELLIA_C=y
 CONFIG_MBEDTLS_GCM_SUPPORT_NON_AES_CIPHER=y
-# CONFIG_MBEDTLS_ASYMMETRIC_CONTENT_LEN is not set
-CONFIG_MBEDTLS_SSL_PROTO_DTLS=y
+CONFIG_MBEDTLS_ASYMMETRIC_CONTENT_LEN=y
+# IN/OUT content-len left at IDF defaults (16384/4096). With MBEDTLS_DYNAMIC_BUFFER
+# these are only the MAX record size, not a held allocation — buffers are sized
+# per-record and freed — so defaults keep the full steady-state memory win while
+# still handshaking against brokers with large (>8K) certificate chains.
+# DTLS disabled so MBEDTLS_DYNAMIC_BUFFER (below) is selectable — it
+# "is not supported with DTLS" and OMG only uses TCP MQTT TLS, not DTLS.
+# CONFIG_MBEDTLS_SSL_PROTO_DTLS is not set
 CONFIG_OPENSSL_ASSERT_DO_NOTHING=y
 CONFIG_PTHREAD_TASK_STACK_SIZE_DEFAULT=2048
 CONFIG_SPI_FLASH_YIELD_DURING_ERASE=y
