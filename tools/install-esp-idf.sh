@@ -22,8 +22,16 @@ git -C "$IDF_PATH" fetch --all --tags
 if [ "$IDF_TAG" ]; then
     git -C "$IDF_PATH" checkout "tags/$IDF_TAG"
     idf_was_installed="1"
-elif [ "$IDF_COMMIT" ]; then
-    git -C "$IDF_PATH" checkout "$IDF_COMMIT"
+elif [ "$IDF_COMMIT_PINNED" ]; then
+    # IDF_COMMIT_PINNED, not IDF_COMMIT: config.sh overwrites the latter with
+    # whatever HEAD already is (see the note there), which turned this checkout
+    # into a no-op and made `build.sh -i` silently ignored on developer
+    # machines. Fail loudly if the pin can't be checked out rather than
+    # building against an unknown ESP-IDF.
+    if ! git -C "$IDF_PATH" checkout "$IDF_COMMIT_PINNED"; then
+        echo "ERROR: could not check out pinned ESP-IDF commit $IDF_COMMIT_PINNED" >&2
+        exit 1
+    fi
     commit_predefined="1"
 fi
 
