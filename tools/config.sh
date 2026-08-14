@@ -52,6 +52,18 @@ AR_SDK="$AR_TOOLS/esp32-arduino-libs/$IDF_TARGET"
 PIOARDUINO_SDK="FRAMEWORK_SDK_DIR, \"$IDF_TARGET\""
 TOOLS_JSON_OUT="$AR_TOOLS/esp32-arduino-libs"
 
+# Keep the commit the caller pinned with `build.sh -i <commit>` before the
+# block below overwrites IDF_COMMIT with the state of the current checkout.
+# install-esp-idf.sh checks out IDF_COMMIT_PINNED, not IDF_COMMIT: config.sh is
+# sourced *before* the checkout runs, so reading HEAD back into IDF_COMMIT made
+# `-i` a silent no-op on any machine that already had an esp-idf/ directory —
+# it "checked out" the commit it had just read. CI never noticed because it
+# starts from a fresh clone. The symptom is a local build that quietly uses a
+# different ESP-IDF than the release it is supposed to reproduce.
+export IDF_COMMIT_PINNED="${IDF_COMMIT:-}"
+
+# IDF_COMMIT / IDF_BRANCH describe what is actually checked out (they end up in
+# versions.txt), so they are re-derived here on every source of this file.
 if [ -d "$IDF_PATH" ]; then
     export IDF_COMMIT=$(git -C "$IDF_PATH" rev-parse --short HEAD)
     export IDF_BRANCH=$(git -C "$IDF_PATH" symbolic-ref --short HEAD || git -C "$IDF_PATH" tag --points-at HEAD)

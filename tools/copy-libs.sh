@@ -101,19 +101,42 @@ fi
 # Inline GCC response files (@file) by replacing them with the file contents.
 # Newer ESP-IDF passes some toolchain flags this way; without expansion the @file
 # reference points at a CI-runner-only path that won't exist downstream.
+#
+# ESP-IDF >= 5.5.2 no longer puts the toolchain base flags on the command line at
+# all. tools/cmake/toolchain.cmake sets
+#     CMAKE_C_FLAGS = @"<build>/toolchain/cflags"      (likewise cxx/asm/ld)
+# so compile_commands.json carries the reference with *escaped* quotes:
+#     ...riscv32-esp-elf-gcc @\"/path/build/toolchain/cflags\" -DESP_PLATFORM ...
+# The reference therefore has to be matched with the backslashes present, and the
+# quotes stripped before the file is opened.
+#
+# A reference that cannot be resolved must never expand to nothing: everything
+# defined only in that file would silently disappear from the generated flags.
+# On RISC-V that flag is -march=rv32imc_zicsr_zifencei, and without it every
+# consumer of these flags falls back to the compiler default (rv32imafdc),
+# emitting atomic and hardware-FP instructions that ESP32-C2/C3 cannot execute --
+# the firmware panics with "Illegal instruction" at the first std::shared_ptr
+# refcount. Fail the build instead.
+#
 # The script is passed via -c so stdin remains available for the piped input.
 expand_response_files() {
 	python3 -c '
 import os, re, sys
 text = sys.stdin.read()
+missing = []
 def expand(m):
-    rf = m.group(1)
-    if os.path.isfile(rf):
-        with open(rf) as f:
-            return f.read().strip()
-    return ""
-text = re.sub(r"@\"([^\"]+)\"", expand, text)
-text = re.sub(r"@(\S+)", expand, text)
+    path = m.group(1).replace("\\\"", "\"").strip("\"")
+    if "/" not in path and "\\" not in path:
+        return m.group(0)  # not a response file reference, leave untouched
+    if os.path.isfile(path):
+        with open(path) as f:
+            return " " + f.read().strip() + " "
+    missing.append(path)
+    return m.group(0)
+text = re.sub(r"(?:(?<=\s)|^)@(\\?\"[^\"\\]+\\?\"|\S+)", expand, text)
+if missing:
+    sys.stderr.write("ERROR: unresolved compiler response file(s): %s\n" % " ".join(missing))
+    sys.exit(1)
 sys.stdout.write(text)
 '
 }
@@ -206,11 +229,14 @@ is_dir=0
 is_script=0
 if [ -f "build/CMakeFiles/arduino-lib-builder.elf.dir/link.txt" ]; then
 	str=`cat build/CMakeFiles/arduino-lib-builder.elf.dir/link.txt`
+	str=`echo "$str" | expand_response_files`
 else
 	libs=`cat build/build.ninja | grep LINK_LIBRARIES`
 	libs="${libs:19:${#libs}-1}"
 	flags=`cat build/build.ninja | grep LINK_FLAGS`
 	flags="${flags:15:${#flags}-1}"
+	# CMAKE_EXE_LINKER_FLAGS is a @response file too (see expand_response_files)
+	flags=`echo "$flags" | expand_response_files`
 	paths=`cat build/build.ninja | grep LINK_PATH`
 	paths="${paths:14:${#paths}-1}"
 	if [ "$IDF_TARGET" = "esp32" ]; then
@@ -338,6 +364,52 @@ done
 #
 # END OF DATA EXTRACTION FROM CMAKE
 #
+
+# Carry the ISA flags over to the link flags.
+#
+# The link command gets them from CMAKE_C_FLAGS, which CMake expands as <FLAGS>
+# in the link rule — not from CMAKE_EXE_LINKER_FLAGS, which on ESP-IDF 5.5.4
+# holds only "-nostartfiles -fno-rtti". Parsing LINK_FLAGS therefore yields no
+# -march at all, and a downstream link without it selects the wrong multilib:
+# the rv32imafdc libc/libm/libstdc++ get pulled in and drag hardware-FP code
+# (_dtoa_r, __ieee754_pow) into an image whose own objects are correct.
+#
+# Older ESP-IDF put -march in the linker flags too, which is why the last
+# bundle built before the 5.5.2 response-file change still had it. Copy the
+# flags across explicitly rather than relying on that.
+for isa_flag in $C_FLAGS; do
+	case "$isa_flag" in
+		-march=*|-mabi=*|-mlongcalls)
+			if [[ " $LD_FLAGS " != *" $isa_flag "* ]]; then
+				LD_FLAGS="$isa_flag $LD_FLAGS"
+			fi
+			if [[ " $PIOARDUINO_LD_FLAGS " != *" $isa_flag "* ]]; then
+				PIOARDUINO_LD_FLAGS="$isa_flag $PIOARDUINO_LD_FLAGS"
+			fi
+			;;
+	esac
+done
+
+# The ISA selection must never go missing from the extracted flags. It is the one
+# class of flag whose absence still builds and links cleanly, only to fault at
+# runtime on the target:
+#   - RISC-V: riscv32-esp-elf-gcc defaults to rv32imafdc, so without -march the
+#     image gets A/F/D instructions no ESP32-C2/C3 implements.
+#   - Xtensa: without -mlongcalls large images fail to link downstream with
+#     "dangerous relocation: call8: call target out of range".
+# Bail out rather than publish libs and flags that are wrong for the target.
+if [ "$IS_XTENSA" = "y" ]; then
+	REQUIRED_ARCH_FLAG="-mlongcalls"
+else
+	REQUIRED_ARCH_FLAG="-march="
+fi
+for flag_set in "C_FLAGS:$C_FLAGS" "CPP_FLAGS:$CPP_FLAGS" "LD_FLAGS:$LD_FLAGS"; do
+	if [[ "${flag_set#*:}" != *"$REQUIRED_ARCH_FLAG"* ]]; then
+		echo "ERROR: ${flag_set%%:*} for $IDF_TARGET has no $REQUIRED_ARCH_FLAG" >&2
+		echo "       extracted: ${flag_set#*:}" >&2
+		exit 1
+	fi
+done
 
 mkdir -p "$AR_SDK"
 
